@@ -4,7 +4,7 @@
 
 # pylint: disable=missing-function-docstring
 
-""" setup.py for setuptools """
+"""setup.py for setuptools"""
 
 import os.path
 
@@ -70,4 +70,5 @@ setuptools.setup(
             "provenance = provenance.main:main",
         ]
     },
+    package_data={"nixmeta.nix_utils": ["parse-meta.nix"]},
 )

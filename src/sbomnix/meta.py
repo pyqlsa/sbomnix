@@ -65,11 +65,13 @@ class Meta:
                     ttl=_NIXMETA_CSV_URL_TTL,
                 )
 
-    def get_nixpkgs_meta(self, nixref=None):
+    def get_nixpkgs_meta(self, nixref=None, only_pkgs=None):
         """
         Return nixpkgs meta pinned in `nixref`. `nixref` can point to a
         nix store path or flake reference. If nixref is None, attempt to
         read the nixpkgs store path from NIX_PATH environment variable.
+        If a set of `only_pkgs` is provided, the metadata for only the
+        specified package names will be returned.
         """
         nixpkgs_path = None
         if nixref:
@@ -88,7 +90,7 @@ class Meta:
         df = None
         if nixpkgs_path:
             LOG.debug("Scanning meta-info using nixpkgs path: %s", nixpkgs_path)
-            df = self._scan(nixpkgs_path)
+            df = self._scan(nixpkgs_path, only_pkgs)
         # Supplement the nix meta info from self.df_nixmeta with the
         # meta information extracted either from nixref or NIX_PATH
         df_concat = pd.concat([df, self.df_nixmeta]).astype(str)
@@ -102,13 +104,21 @@ class Meta:
                 df_to_csv_file(df_concat, "df_concat.csv")
         return df_concat
 
-    def _scan(self, nixpkgs_path):
-        df = self.cache.get(nixpkgs_path)
+    def _scan(self, nixpkgs_path, only_pkgs):
+        key = nixpkgs_path
+        df = self.cache.get(key)
         if df is not None and not df.empty:
-            LOG.debug("found from cache: %s", nixpkgs_path)
+            LOG.debug("found from cache: %s", key)
             return df
+        if only_pkgs is not None:
+            key = _key_for_path_with_pkgs(nixpkgs_path, only_pkgs)
+            df = self.cache.get(key)
+            if df is not None and not df.empty:
+                LOG.debug("found from cache: %s", key)
+                return df
+
         LOG.debug("cache miss, scanning: %s", nixpkgs_path)
-        scanner = NixMetaScanner()
+        scanner = NixMetaScanner(only_pkgs)
         scanner.scan(nixpkgs_path)
         df = scanner.to_df()
         if df is None or df.empty:
@@ -117,8 +127,13 @@ class Meta:
         # Cache requires some TTL, so we set it to some value here.
         # Although, we could as well store it indefinitely as it should
         # not change given the same key (nixpkgs store path).
-        self.cache.set(key=nixpkgs_path, value=df, ttl=_NIXMETA_NIXPKGS_TTL)
+        self.cache.set(key=key, value=df, ttl=_NIXMETA_NIXPKGS_TTL)
         return df
 
 
 ###############################################################################
+
+
+def _key_for_path_with_pkgs(path, pkgs):
+    ps = " ".join(sorted(pkgs))
+    return f"{path} {ps}"

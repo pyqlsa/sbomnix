@@ -6,7 +6,7 @@
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments
 
-""" Module for generating SBOMs in various formats """
+"""Module for generating SBOMs in various formats"""
 
 import uuid
 import logging
@@ -99,10 +99,14 @@ class SbomDb:
     def _sbomdb_join_meta(self):
         """Join self.df_sbomdb with meta information"""
         self.meta = Meta()
+        pkgs = set()
+        for drv in self.df_sbomdb.itertuples():
+            pkgs.add(drv.pname)
+        LOG.debug("extracted packages from sbomdb: %s", pkgs)
         if self.flakeref:
-            df_meta = self.meta.get_nixpkgs_meta(self.flakeref)
+            df_meta = self.meta.get_nixpkgs_meta(self.flakeref, pkgs)
         else:
-            df_meta = self.meta.get_nixpkgs_meta()
+            df_meta = self.meta.get_nixpkgs_meta(only_pkgs=pkgs)
         if df_meta is None or df_meta.empty:
             LOG.warning(
                 "Failed reading nix meta information: "

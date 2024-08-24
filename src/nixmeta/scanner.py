@@ -5,11 +5,13 @@
 
 """Summarize nixpkgs meta-attributes"""
 
+import os
 import re
 import pathlib
 import json
 from tempfile import NamedTemporaryFile
 import pandas as pd
+from importlib.resources import files as pkg_files
 from common.utils import (
     LOG,
     LOG_SPAM,
@@ -24,8 +26,9 @@ from common.utils import (
 class NixMetaScanner:
     """Scan nixpkgs meta-info"""
 
-    def __init__(self):
+    def __init__(self, only_pkgs=None):
         self.df_meta = None
+        self.only_pkgs = only_pkgs
 
     def scan(self, nixref):
         """
@@ -59,11 +62,26 @@ class NixMetaScanner:
         return self.df_meta
 
     def _read_nixpkgs_meta(self, nixpkgs_path):
+        if self.only_pkgs is None:
+            cmd = f"nix-env -qa --meta --json -f {nixpkgs_path.as_posix()}"
+            self._import_meta_with_command(cmd.split())
+        else:
+            prefix = "parse-meta-"
+            suffix = ".nix"
+            with NamedTemporaryFile(delete=True, prefix=prefix, suffix=suffix) as nf:
+                nf.write(_get_parse_meta_nix())
+                nf.flush()
+                LOG.debug("Generated nix metadata parsing helper: %s", nf.name)
+                cmd = _nix_eval_select_pkgs_cmd(
+                    nixpkgs_path.as_posix(), self.only_pkgs, nf.name
+                )
+                self._import_meta_with_command(cmd)
+
+    def _import_meta_with_command(self, cmd):
         prefix = "nixmeta_"
         suffix = ".json"
         with NamedTemporaryFile(delete=True, prefix=prefix, suffix=suffix) as f:
-            cmd = f"nix-env -qa --meta --json -f {nixpkgs_path.as_posix()}"
-            exec_cmd(cmd.split(), stdout=f)
+            exec_cmd(cmd, stdout=f)
             LOG.debug("Generated meta.json: %s", f.name)
             self.df_meta = _parse_json_metadata(f.name)
             self._drop_duplicates()
@@ -83,6 +101,30 @@ class NixMetaScanner:
 
 
 ###############################################################################
+
+
+def _get_parse_meta_nix():
+    return pkg_files("nixmeta.nix_utils").joinpath("parse-meta.nix").read_bytes()
+
+
+def _nix_eval_select_pkgs_cmd(nix_path, pkgs, nix_helper):
+    tmp = "nix eval "
+    tmp += "--extra-experimental-features flakes "
+    tmp += "--extra-experimental-features nix-command "
+    tmp += f"--json -f {nix_helper} --apply"
+    pnames = _nix_str_list(pkgs)
+    nix_exp = f"f: f {{ ps = {pnames}; pkgs = import {nix_path} {{ config.allowBroken = true; config.allowUnfree = true; }}; }}"
+    cmd = tmp.split()
+    cmd.append(f"{nix_exp}")
+    return cmd
+
+
+def _nix_str_list(ls):
+    ret = "["
+    for item in ls:
+        ret += f' "{item}" '
+    ret += "]"
+    return ret
 
 
 def nixref_to_nixpkgs_path(flakeref):
